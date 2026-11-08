@@ -1,0 +1,24 @@
+name: Resolve YouTube channels
+
+on:
+  workflow_dispatch:
+    inputs:
+      all:
+        description: "Re-resolve every channel (not just new ones)"
+        type: boolean
+        default: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r job/requirements.txt
+      - env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python job/resolve_youtube.py ${{ github.event.inputs.all == 'true' && '--all' || '' }}
