@@ -1,9 +1,8 @@
 name: Build briefing
 
 on:
-  # PAUSED until setup is finished. To resume, remove the "#" from the two lines below.
-  # schedule:
-  #   - cron: "7 * * * *"   # hourly; the job only builds when a briefing time is due
+  schedule:
+    - cron: "7 * * * *"   # hourly; the job only builds when a briefing time is due
   workflow_dispatch:
     inputs:
       mode:
