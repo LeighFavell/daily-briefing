@@ -204,3 +204,13 @@ details.add input { display: block; width: 100%; margin: 6px 0; }
 .titlerow { align-items: center; }
 .titlerow img, .noposter.sm { width: 36px; height: 54px; border-radius: 4px; object-fit: cover; flex: none; background: var(--line); }
 .titlerow select { padding: 6px; font-size: 15px; }
+
+/* Read buttons */
+.cardfoot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 4px; }
+.readbtn {
+  flex: none; width: 40px; height: 40px; border-radius: 50%;
+  border: 1.5px solid var(--line); background: var(--card); color: var(--accent);
+  font-size: 18px; font-weight: 700;
+}
+.readbtn:active { background: var(--accent); color: var(--accent-text); }
+.card.gone { opacity: 0; transform: translateX(30px); transition: opacity .25s, transform .25s; }

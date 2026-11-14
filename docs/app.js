@@ -85,24 +85,23 @@ function renderSignIn(message = "") {
 async function renderBriefing() {
   setNav("briefing", "Briefing");
   app.innerHTML = `<p class="muted center pad">Loading…</p>`;
+  const since = new Date(Date.now() - 14 * 864e5).toISOString();
 
-  const { data: briefings, error } = await db
-    .from("briefings").select("*").order("created_at", { ascending: false }).limit(1);
+  const [{ data: rows, error }, { data: sections }, { data: latest }] = await Promise.all([
+    db.from("briefing_items")
+      .select("briefing_id, rank, section_id, item_id, headline, summary, why_it_matters, briefings!inner(created_at), items(url, published_at, sources(name))")
+      .is("read_at", null).gte("briefings.created_at", since),
+    db.from("sections").select("id, title, sort_order").order("sort_order"),
+    db.from("briefings").select("*").order("created_at", { ascending: false }).limit(1),
+  ]);
   if (error) return (app.innerHTML = `<p class="error pad">${esc(error.message)}</p>`);
-  const b = briefings[0];
+  const b = latest[0];
   if (!b) {
     app.innerHTML = `<div class="done"><h1>No briefing yet</h1>
       <p class="muted">Your first one arrives ${esc(await nextSlotText())}.</p></div>`;
     return;
   }
-  if (b.completed_at) return renderDone(b, true);
-
-  const [{ data: rows }, { data: sections }] = await Promise.all([
-    db.from("briefing_items")
-      .select("rank, section_id, item_id, headline, summary, why_it_matters, items(url, published_at, sources(name))")
-      .eq("briefing_id", b.id),
-    db.from("sections").select("id, title, sort_order").order("sort_order"),
-  ]);
+  if (!rows.length) return renderDone(b);
 
   const f1Ids = rows.filter((r) => r.section_id === "f1").map((r) => r.item_id);
   const races = {};
@@ -110,63 +109,92 @@ async function renderBriefing() {
     const { data: f1rows } = await db.from("f1_races").select("*").in("item_id", f1Ids);
     for (const r of f1rows || []) races[r.item_id] = r;
   }
-
   if (!b.opened_at) db.from("briefings").update({ opened_at: new Date().toISOString() }).eq("id", b.id).then(() => {});
 
   const { part, day } = briefingLabel(b);
   let html = `<section class="intro pad">
       <p class="eyebrow">${esc(day)}</p>
       <h1>${esc(part)} briefing</h1>
-      <p class="muted">${rows.length} items · about ${Math.max(2, Math.round(rows.length * 0.4))} minutes</p>
+      <p class="muted"><span id="left">${rows.length}</span> to read</p>
     </section>`;
 
   for (const s of sections) {
-    const items = rows.filter((r) => r.section_id === s.id).sort((a, z) => a.rank - z.rank);
+    const items = rows.filter((r) => r.section_id === s.id)
+      .sort((a, z) => z.briefings.created_at.localeCompare(a.briefings.created_at) || a.rank - z.rank);
     if (!items.length) continue;
-    html += `<section class="section"><h2>${esc(s.title)}</h2>`;
+    html += `<section class="section" data-section><h2>${esc(s.title)}</h2>`;
     for (const it of items) {
+      const key = `${it.briefing_id}|${it.item_id}`;
+      const readBtn = `<button class="readbtn" data-read="${key}" aria-label="Mark as read">✓</button>`;
       if (s.id === "f1" && races[it.item_id]) {
-        html += f1Card(it, races[it.item_id]);
+        html += f1Card(it, races[it.item_id]).replace(/<\/article>\s*$/, `<div class="cardfoot"><span></span>${readBtn}</div></article>`)
+          .replace('<article class="card item f1"', `<article class="card item f1" data-card="${key}"`);
         continue;
       }
       const src = it.items?.sources?.name || "";
-      html += `<article class="card item">
+      html += `<article class="card item" data-card="${key}">
           <a href="${esc(it.items?.url)}" target="_blank" rel="noopener">
             <h3>${esc(it.headline)}</h3>
           </a>
           <p>${esc(it.summary)}</p>
           ${it.why_it_matters ? `<p class="why"><strong>Why it matters:</strong> ${esc(it.why_it_matters)}</p>` : ""}
-          <p class="meta">${esc(src)}${it.items?.published_at ? " · " + ago(it.items.published_at) : ""}</p>
+          <div class="cardfoot"><p class="meta">${esc(src)}${it.items?.published_at ? " · " + ago(it.items.published_at) : ""}</p>${readBtn}</div>
         </article>`;
     }
     html += `</section>`;
   }
-  html += `<div class="pad center"><button class="primary big" id="finish">I'm done</button></div>`;
+  html += `<div class="pad center"><button class="primary big" id="finish">Mark all as read</button></div>`;
   app.innerHTML = html;
-
   wireF1();
-  document.getElementById("finish").addEventListener("click", async () => {
+
+  const markRead = (pairs) => {
+    const now = new Date().toISOString();
+    return Promise.all(pairs.map(([bid, iid]) =>
+      db.from("briefing_items").update({ read_at: now }).eq("briefing_id", bid).eq("item_id", iid)));
+  };
+  const allDone = async () => {
     await db.from("briefings").update({ completed_at: new Date().toISOString() }).eq("id", b.id);
-    renderDone(b, false);
+    renderDone(b);
     window.scrollTo(0, 0);
+  };
+
+  app.querySelectorAll("[data-read]").forEach((btn) => btn.addEventListener("click", async () => {
+    const card = btn.closest("[data-card]");
+    btn.disabled = true;
+    card.classList.add("gone");
+    const { 0: res } = await markRead([btn.dataset.read.split("|")]);
+    if (res?.error) { card.classList.remove("gone"); btn.disabled = false; return toast(res.error.message); }
+    setTimeout(() => {
+      const sec = card.closest("[data-section]");
+      card.remove();
+      if (!sec.querySelector("[data-card]")) sec.remove();
+      const left = app.querySelectorAll("[data-card]").length;
+      document.getElementById("left").textContent = left;
+      if (!left) allDone();
+    }, 250);
+  }));
+
+  document.getElementById("finish").addEventListener("click", async () => {
+    const pairs = [...app.querySelectorAll("[data-card]")].map((c) => c.dataset.card.split("|"));
+    await markRead(pairs);
+    allDone();
   });
 }
 
-async function renderDone(b, already) {
+async function renderDone(b) {
   setNav("briefing", "Briefing");
   app.innerHTML = `<div class="done">
       <div class="tick">✓</div>
       <h1>You're done</h1>
       <p>That's everything worth knowing for now.</p>
       <p class="muted">Next briefing ${esc(await nextSlotText())}.</p>
-      ${already ? `<button class="link" id="reread">Read this briefing again</button>` : ""}
+      <button class="link" id="reread">Show the last briefing again</button>
     </div>`;
-  if (already) {
-    document.getElementById("reread").addEventListener("click", async () => {
-      await db.from("briefings").update({ completed_at: null }).eq("id", b.id);
-      renderBriefing();
-    });
-  }
+  document.getElementById("reread").addEventListener("click", async () => {
+    await db.from("briefing_items").update({ read_at: null }).eq("briefing_id", b.id);
+    await db.from("briefings").update({ completed_at: null }).eq("id", b.id);
+    renderBriefing();
+  });
 }
 
 // ---------------------------------------------------------------- Formula 1
