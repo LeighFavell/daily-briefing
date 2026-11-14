@@ -3,6 +3,6 @@
 // database means it can't read anything until you sign in.
 // NEVER put the secret key here.
 window.BRIEFING_CONFIG = {
-  supabaseUrl: "PASTE_PROJECT_URL_HERE",
-  supabaseKey: "PASTE_PUBLISHABLE_KEY_HERE",
+  supabaseUrl: "https://csalruorxfikbvhfohja.supabase.co",
+  supabaseKey: "sb_publishable_HvRKvnSTr9ejd6zlAU_Aiw_fovA0vq9",
 };
