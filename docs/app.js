@@ -2,8 +2,23 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const cfg = window.BRIEFING_CONFIG || {};
 const app = document.getElementById("app");
-const navBriefing = document.getElementById("nav-briefing");
-const navSources = document.getElementById("nav-sources");
+const tabs = document.getElementById("tabs");
+const pageTitle = document.getElementById("page-title");
+
+function setNav(tab, title) {
+  tabs.hidden = !tab;
+  pageTitle.textContent = title || "Briefing";
+  tabs.querySelectorAll("a").forEach((a) => a.classList.toggle("on", a.dataset.tab === tab));
+}
+
+let toastTimer;
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.hidden = true), 1800);
+}
 
 if (!cfg.supabaseUrl || cfg.supabaseUrl.startsWith("PASTE")) {
   app.innerHTML = `<div class="pad"><h1>Almost there</h1>
@@ -48,7 +63,7 @@ async function nextSlotText() {
 
 // ---------------------------------------------------------------- sign in
 function renderSignIn(message = "") {
-  navBriefing.hidden = navSources.hidden = true;
+  setNav(null, "Briefing");
   app.innerHTML = `
     <form class="card signin" id="signin">
       <h1>Sign in</h1>
@@ -68,8 +83,7 @@ function renderSignIn(message = "") {
 
 // ---------------------------------------------------------------- briefing
 async function renderBriefing() {
-  navBriefing.hidden = true;
-  navSources.hidden = false;
+  setNav("briefing", "Briefing");
   app.innerHTML = `<p class="muted center pad">Loading…</p>`;
 
   const { data: briefings, error } = await db
@@ -139,8 +153,7 @@ async function renderBriefing() {
 }
 
 async function renderDone(b, already) {
-  navBriefing.hidden = true;
-  navSources.hidden = false;
+  setNav("briefing", "Briefing");
   app.innerHTML = `<div class="done">
       <div class="tick">✓</div>
       <h1>You're done</h1>
@@ -251,54 +264,285 @@ function wireF1() {
   });
 }
 
-// ---------------------------------------------------------------- sources
-async function renderSources() {
-  navBriefing.hidden = false;
-  navSources.hidden = true;
-  const [{ data: sources }, { data: sections }] = await Promise.all([
-    db.from("sources").select("*").order("name"),
-    db.from("sections").select("id, title, sort_order").order("sort_order"),
+// ---------------------------------------------------------------- settings
+const NO_RULE = new Set(["f1", "films_tv", "youtube"]);
+const ADD_KIND = {
+  youtube: { kind: "youtube", label: "Add a YouTube channel", name: "Channel name", url: false },
+  youtube_discover: { kind: "youtube_topic", label: "Add a topic to watch", name: "Topic, e.g. Fabric tutorials", url: false },
+  f1: null,
+  films_tv: null,
+};
+
+function sourceStatus(src) {
+  if (src.kind === "tmdb") return ["ok", "Weekly, from your scores"];
+  if (src.last_error) return ["bad", src.last_error];
+  if (!src.last_fetched_at) return ["wait", src.kind === "youtube" ? "Will be matched on the next run" : "Not fetched yet"];
+  let note = `Checked ${ago(src.last_fetched_at)}`;
+  if (src.kind === "youtube" && src.resolved_name && src.resolved_name !== src.name) note = `Matched to “${src.resolved_name}” · ${note}`;
+  return ["ok", note];
+}
+
+async function renderSettings() {
+  setNav("settings", "Settings");
+  const [{ data: settings }, { data: sections }, { data: sources }] = await Promise.all([
+    db.from("settings").select("*").eq("id", 1).single(),
+    db.from("sections").select("*").order("sort_order"),
+    db.from("sources").select("*").order("created_at"),
   ]);
-  let html = `<section class="intro pad"><h1>Sources</h1>
-    <p class="muted">Feed health from the last run. Editing comes in a later phase.</p></section>`;
-  for (const s of sections) {
-    const list = sources.filter((x) => x.section_id === s.id);
-    if (!list.length) continue;
-    html += `<section class="section"><h2>${esc(s.title)}</h2><div class="card list">`;
+
+  let html = `<section class="section"><h2>Briefing times (UK)</h2><div class="card">
+      <div class="chips">${settings.briefing_times.map((t) =>
+        `<span class="chip-t">${esc(t)}<button data-del-time="${esc(t)}" aria-label="Remove ${esc(t)}">✕</button></span>`).join("")}</div>
+      <div class="inline"><input type="time" id="new-time" value="12:30"><button class="small" id="add-time">Add time</button></div>
+      <label class="inline">Items per section <input type="number" min="1" max="20" id="default-items" value="${settings.default_items_per_section}"></label>
+    </div></section>`;
+
+  sections.forEach((sec, i) => {
+    const list = sources.filter((x) => x.section_id === sec.id);
+    const add = sec.id in ADD_KIND ? ADD_KIND[sec.id] : { kind: "rss", label: "Add a news feed", name: "Name", url: true };
+    html += `<section class="section" data-sec="${esc(sec.id)}"><div class="sec-head">
+        <h2>${esc(sec.title)}</h2>
+        <div class="sec-tools">
+          <button class="icon" data-move="-1" ${i === 0 ? "disabled" : ""} aria-label="Move up">↑</button>
+          <button class="icon" data-move="1" ${i === sections.length - 1 ? "disabled" : ""} aria-label="Move down">↓</button>
+          <label class="switch"><input type="checkbox" data-enabled ${sec.enabled ? "checked" : ""}><span></span></label>
+        </div></div>
+      <div class="card ${sec.enabled ? "" : "off"}">
+        <label class="inline">Max items <input type="number" min="1" max="20" data-max placeholder="${settings.default_items_per_section}" value="${sec.max_items ?? ""}"></label>
+        ${NO_RULE.has(sec.id) ? "" : `<details><summary>What to include</summary>
+          <textarea data-rule rows="5">${esc(sec.ai_rule)}</textarea>
+          <button class="small" data-save-rule>Save</button></details>`}
+        <div class="list">`;
     for (const src of list) {
-      let status, note = "";
-      if (src.last_error) { status = "bad"; note = src.last_error; }
-      else if (!src.last_fetched_at) { status = "wait"; note = "Not fetched yet"; }
-      else { status = "ok"; note = `Checked ${ago(src.last_fetched_at)}`; }
-      if (src.kind === "youtube" && src.resolved_name && src.resolved_name !== src.name) {
-        note = `Matched to “${src.resolved_name}” · ${note}`;
-      }
-      html += `<div class="row"><span class="dot ${status}"></span>
-          <div><div>${esc(src.name)}${src.enabled ? "" : " <span class='muted'>(paused)</span>"}</div>
-          <div class="meta">${esc(note)}</div></div></div>`;
+      const [st, note] = sourceStatus(src);
+      html += `<div class="row" data-src="${src.id}"><span class="dot ${src.enabled ? st : "wait"}"></span>
+          <div class="grow"><div>${esc(src.name)}${src.enabled ? "" : " <span class='muted'>(paused)</span>"}</div>
+          <div class="meta">${esc(note)}</div></div>
+          ${src.kind === "tmdb" || src.kind === "f1" ? "" : `
+          <button class="icon" data-pause aria-label="${src.enabled ? "Pause" : "Resume"}">${src.enabled ? "❚❚" : "▶"}</button>
+          <button class="icon" data-del-src aria-label="Remove">✕</button>`}</div>`;
+    }
+    html += `</div>`;
+    if (add) {
+      html += `<details class="add"><summary>${add.label}</summary>
+          <input data-new-name placeholder="${esc(add.name)}">
+          ${add.url ? `<input data-new-url type="url" placeholder="RSS feed address (https://…)">` : ""}
+          <button class="small" data-add-src="${add.kind}">Add</button></details>`;
     }
     html += `</div></section>`;
-  }
-  html += `<div class="pad center"><button class="link" id="signout">Sign out</button></div>`;
+  });
+  html += `<div class="pad center"><p class="meta">Changes apply from the next briefing.</p>
+      <button class="link" id="signout">Sign out</button></div>`;
   app.innerHTML = html;
+
+  // times
+  const saveTimes = async (times) => {
+    times = [...new Set(times)].sort();
+    await db.from("settings").update({ briefing_times: times, updated_at: new Date().toISOString() }).eq("id", 1);
+    toast("Times saved");
+    renderSettings();
+  };
+  app.querySelectorAll("[data-del-time]").forEach((b) => b.addEventListener("click", () => {
+    const rest = settings.briefing_times.filter((t) => t !== b.dataset.delTime);
+    if (!rest.length) return toast("Keep at least one time");
+    saveTimes(rest);
+  }));
+  document.getElementById("add-time").addEventListener("click", () => {
+    const v = document.getElementById("new-time").value;
+    if (v) saveTimes([...settings.briefing_times, v.slice(0, 5)]);
+  });
+  document.getElementById("default-items").addEventListener("change", async (e) => {
+    await db.from("settings").update({ default_items_per_section: +e.target.value || 5 }).eq("id", 1);
+    toast("Saved");
+  });
+
+  // sections
+  app.querySelectorAll("[data-sec]").forEach((el) => {
+    const id = el.dataset.sec;
+    const idx = sections.findIndex((s) => s.id === id);
+    el.querySelectorAll("[data-move]").forEach((b) => b.addEventListener("click", async () => {
+      const other = sections[idx + +b.dataset.move];
+      if (!other) return;
+      const me = sections[idx];
+      await db.from("sections").update({ sort_order: other.sort_order }).eq("id", me.id);
+      await db.from("sections").update({ sort_order: me.sort_order }).eq("id", other.id);
+      renderSettings();
+    }));
+    el.querySelector("[data-enabled]").addEventListener("change", async (e) => {
+      await db.from("sections").update({ enabled: e.target.checked }).eq("id", id);
+      toast(e.target.checked ? "Section on" : "Section off");
+      el.querySelector(".card").classList.toggle("off", !e.target.checked);
+    });
+    el.querySelector("[data-max]").addEventListener("change", async (e) => {
+      await db.from("sections").update({ max_items: e.target.value ? +e.target.value : null }).eq("id", id);
+      toast("Saved");
+    });
+    el.querySelector("[data-save-rule]")?.addEventListener("click", async () => {
+      await db.from("sections").update({ ai_rule: el.querySelector("[data-rule]").value.trim() }).eq("id", id);
+      toast("Saved");
+    });
+    el.querySelectorAll("[data-src]").forEach((row) => {
+      const src = sources.find((x) => x.id === row.dataset.src);
+      row.querySelector("[data-pause]")?.addEventListener("click", async () => {
+        await db.from("sources").update({ enabled: !src.enabled }).eq("id", src.id);
+        renderSettings();
+      });
+      row.querySelector("[data-del-src]")?.addEventListener("click", async () => {
+        if (!confirm(`Remove ${src.name}?`)) return;
+        await db.from("sources").delete().eq("id", src.id);
+        renderSettings();
+      });
+    });
+    el.querySelector("[data-add-src]")?.addEventListener("click", async (e) => {
+      const name = el.querySelector("[data-new-name]").value.trim();
+      const url = el.querySelector("[data-new-url]")?.value.trim() || null;
+      if (!name) return toast("Add a name");
+      if (e.target.dataset.addSrc === "rss" && !/^https?:\/\//.test(url || "")) return toast("Add the feed address");
+      const { error } = await db.from("sources").insert({ section_id: id, name, kind: e.target.dataset.addSrc, url });
+      if (error) return toast(error.message);
+      toast("Added: it'll be checked on the next run");
+      renderSettings();
+    });
+  });
+
   document.getElementById("signout").addEventListener("click", async () => {
     await db.auth.signOut();
     renderSignIn();
   });
 }
 
+// ---------------------------------------------------------------- films & TV
+const POSTER = (p, w = 154) => (p ? `https://image.tmdb.org/t/p/w${w}${p}` : "");
+const scoreSelect = (val, attr, label = "Score") =>
+  `<select ${attr}><option value="">${label}</option>${[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]
+    .map((n) => `<option value="${n}" ${n === val ? "selected" : ""}>${n}/10</option>`).join("")}</select>`;
+
+async function renderFilms() {
+  setNav("films", "Films & TV");
+  const [{ data: recs }, { data: titles }] = await Promise.all([
+    db.from("recommendations").select("*").order("batch_at", { ascending: false }).limit(15),
+    db.from("titles").select("*").order("score", { ascending: false, nullsFirst: false }).order("created_at"),
+  ]);
+  const latest = recs[0]?.batch_at;
+  const picks = recs.filter((r) => r.batch_at === latest && r.status === "new");
+  const watchlist = titles.filter((t) => t.status === "watchlist");
+  const rated = titles.filter((t) => t.status === "rated");
+
+  let html = `<section class="section"><h2>This week's picks</h2>`;
+  if (!picks.length) {
+    html += `<div class="card"><p class="muted">${recs.length ? "You've been through this week's picks. New ones arrive weekly." : "Your first picks arrive with the next briefing."}</p></div>`;
+  }
+  for (const r of picks) {
+    html += `<article class="card pick" data-rec="${r.id}">
+        ${r.poster_path ? `<img src="${POSTER(r.poster_path)}" alt="" loading="lazy">` : `<div class="noposter"></div>`}
+        <div class="grow">
+          <h3><a href="https://www.themoviedb.org/${r.media_type}/${r.tmdb_id}" target="_blank" rel="noopener">${esc(r.title)}</a></h3>
+          <p class="meta">${r.year || ""} · ${r.media_type === "movie" ? "Film" : "TV"}${r.where_to_watch ? " · " + esc(r.where_to_watch) : ""}</p>
+          <p>${esc(r.reason)}</p>
+          <div class="btns">
+            <span class="seen">${scoreSelect(null, "data-seen-score", "Seen it: score")}</span>
+            <button class="small" data-act="watchlist">Want to watch</button>
+            <button class="small ghost" data-act="not_interested">Not for me</button>
+          </div>
+        </div></article>`;
+  }
+  html += `</section>`;
+
+  html += `<section class="section"><h2>Add something you've watched</h2><div class="card addtitle">
+      <input id="t-name" placeholder="Title">
+      <div class="inline">
+        <input id="t-year" type="number" placeholder="Year" min="1900" max="2100">
+        <select id="t-type"><option value="movie">Film</option><option value="tv">TV</option></select>
+        ${scoreSelect(null, 'id="t-score"')}
+      </div>
+      <button class="primary" id="t-add">Add score</button>
+    </div></section>`;
+
+  if (watchlist.length) {
+    html += `<section class="section"><h2>Want to watch</h2><div class="card list">`;
+    for (const t of watchlist) html += titleRow(t, true);
+    html += `</div></section>`;
+  }
+  html += `<section class="section"><h2>Your scores (${rated.length})</h2><div class="card list">`;
+  for (const t of rated) html += titleRow(t, false);
+  html += `</div></section><div class="pad"><p class="meta center">Film data from TMDB.</p></div>`;
+  app.innerHTML = html;
+
+  // picks
+  app.querySelectorAll("[data-rec]").forEach((card) => {
+    const r = picks.find((x) => x.id === card.dataset.rec);
+    const base = { query: r.title, query_year: r.year, media_type: r.media_type, tmdb_id: r.tmdb_id,
+                   title: r.title, year: r.year, poster_path: r.poster_path };
+    const finish = async (status, titleRow) => {
+      const { error } = await db.from("titles").insert({ ...base, ...titleRow });
+      if (error && !/duplicate/i.test(error.message)) return toast(error.message);
+      await db.from("recommendations").update({ status }).eq("id", r.id);
+      card.remove();
+      toast("Saved");
+    };
+    card.querySelector("[data-seen-score]").addEventListener("change", (e) => {
+      if (e.target.value) finish("seen", { score: +e.target.value, status: "rated" });
+    });
+    card.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () =>
+      finish(b.dataset.act, { status: b.dataset.act })));
+  });
+
+  document.getElementById("t-add").addEventListener("click", async () => {
+    const query = document.getElementById("t-name").value.trim();
+    const score = +document.getElementById("t-score").value;
+    if (!query) return toast("Add a title");
+    if (!score) return toast("Pick a score");
+    const { error } = await db.from("titles").insert({
+      query, query_year: +document.getElementById("t-year").value || null,
+      media_type: document.getElementById("t-type").value, score,
+    });
+    if (error) return toast(error.message);
+    toast("Added. It'll be matched on the next run");
+    renderFilms();
+  });
+
+  app.querySelectorAll("[data-title]").forEach((row) => {
+    const id = row.dataset.title;
+    row.querySelector("[data-score]")?.addEventListener("change", async (e) => {
+      if (!e.target.value) return;
+      await db.from("titles").update({ score: +e.target.value, status: "rated", updated_at: new Date().toISOString() }).eq("id", id);
+      toast("Score saved");
+      if (row.closest("section").querySelector("h2").textContent.startsWith("Want")) renderFilms();
+    });
+    row.querySelector("[data-del-title]").addEventListener("click", async () => {
+      await db.from("titles").delete().eq("id", id);
+      row.remove();
+    });
+  });
+}
+
+function titleRow(t, watch) {
+  const name = t.title || t.query;
+  const year = t.year || t.query_year;
+  const note = t.match_error ? "Couldn't find this one. Check the spelling or add the year."
+    : !t.tmdb_id ? "Matching on the next run…" : t.media_type === "movie" ? "Film" : "TV";
+  return `<div class="row titlerow" data-title="${t.id}">
+      ${t.poster_path ? `<img src="${POSTER(t.poster_path, 92)}" alt="" loading="lazy">` : `<div class="noposter sm"></div>`}
+      <div class="grow"><div>${esc(name)}${year ? ` <span class="muted">(${year})</span>` : ""}</div>
+        <div class="meta ${t.match_error ? "error" : ""}">${esc(note)}</div></div>
+      ${scoreSelect(watch ? null : t.score, "data-score")}
+      <button class="icon" data-del-title aria-label="Remove">✕</button></div>`;
+}
+
 // ---------------------------------------------------------------- routing
 async function route() {
   const { data } = await db.auth.getSession();
   if (!data.session) return renderSignIn();
-  if (location.hash === "#sources") return renderSources();
+  window.scrollTo(0, 0);
+  if (location.hash === "#settings" || location.hash === "#sources") return renderSettings();
+  if (location.hash === "#films") return renderFilms();
   return renderBriefing();
 }
 
-navSources.addEventListener("click", () => { location.hash = "sources"; });
-navBriefing.addEventListener("click", () => { location.hash = ""; });
 window.addEventListener("hashchange", route);
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") route(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && !location.hash) route();
+});
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 route();

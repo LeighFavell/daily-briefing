@@ -44,6 +44,12 @@ Adds Welsh rugby & football (full match reports summarised) and Formula 1
 (results, position-per-lap chart, race story). Test F1 any time with
 Actions → Build briefing → mode `f1-test` (looks back 30 days).
 
+## Phase 3 (settings, films & TV, discovery)
+Run `supabase/migrations/0004_phase3.sql`, and add a `TMDB_API_KEY` secret.
+- **Settings tab**: briefing times, section order/on-off/size/rules, add/pause/remove sources.
+- **Films & TV tab**: score anything out of 10; weekly picks (Claude Sonnet) with UK streaming info.
+- **Notable deaths**: filtered to people linked to your favourite films, TV and channels.
+- **Worth a watch**: new videos on your YouTube topics.
+
 ## Roadmap
-3. Settings page, film/TV scores out of 10 with weekly recommendations, notable deaths
 4. Share-sheet capture inbox, Instagram/TikTok/Facebook redirect, notifications

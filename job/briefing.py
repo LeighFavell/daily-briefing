@@ -24,6 +24,8 @@ import feedparser
 import httpx
 
 import f1
+import films
+import youtube
 
 MODEL = os.environ.get("BRIEFING_MODEL", "claude-haiku-5-5")
 # USD per million tokens (Haiku 5.5, prompts under 100K tokens)
@@ -113,6 +115,13 @@ def fetch_anthropic_news(client: httpx.Client) -> list[dict]:
 
 
 def fetch_source(client: httpx.Client, src: dict) -> list[dict]:
+    if src["kind"] == "tmdb":
+        return []  # film & TV picks are made in the curation step
+    if src["kind"] == "youtube_topic":
+        key = os.environ.get("YOUTUBE_API_KEY", "").strip()
+        if not key:
+            raise ValueError("YOUTUBE_API_KEY secret is not set")
+        return youtube.search_topic(client, key, src["name"])
     if src["kind"] == "youtube":
         if not src.get("youtube_channel_id"):
             raise ValueError("channel id not resolved yet - run the 'Resolve YouTube channels' workflow")
@@ -299,6 +308,20 @@ def main() -> int:
     by_id = {s["id"]: s for s in sources}
 
     with httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=20, follow_redirects=True) as http:
+        yt_key = os.environ.get("YOUTUBE_API_KEY", "").strip()
+        tmdb_key = os.environ.get("TMDB_API_KEY", "").strip()
+        if yt_key:
+            try:
+                youtube.resolve_channels(db, http, yt_key, log)
+            except Exception as exc:
+                log(f"  YouTube channel lookup failed: {exc}")
+            sources = db.table("sources").select("*").eq("enabled", True).execute().data
+            by_id = {s["id"]: s for s in sources}
+        if tmdb_key:
+            try:
+                films.match_new_titles(db, films.Tmdb(http, tmdb_key), log)
+            except Exception as exc:
+                log(f"  TMDB matching failed: {exc}")
         for src in sources:
             now_iso = datetime.now(timezone.utc).isoformat()
             try:
@@ -338,6 +361,21 @@ def main() -> int:
     picked_rows: list[dict] = []
     considered: list[str] = []
 
+    # Weekly film & TV picks become items in the films_tv section
+    tmdb_src = next((s for s in sources if s["kind"] == "tmdb"), None)
+    tmdb_key = os.environ.get("TMDB_API_KEY", "").strip()
+    if tmdb_src and tmdb_key and any(sec["id"] == "films_tv" for sec in sections) and films.picks_due(db):
+        try:
+            with httpx.Client(timeout=20) as http:
+                rows, cost = films.make_picks(db, films.Tmdb(http, tmdb_key), claude, log)
+            total_cost += cost
+            new_items = [{**it, "source_id": tmdb_src["id"],
+                          "published_at": it["published_at"].isoformat()} for it in films.picks_as_items(rows)]
+            if new_items:
+                db.table("items").upsert(new_items, on_conflict="url", ignore_duplicates=True).execute()
+        except Exception as exc:
+            log(f"  Film & TV picks failed: {type(exc).__name__}: {exc}")
+
     for section in sections:
         src_ids = [s["id"] for s in sources if s["section_id"] == section["id"]]
         if not src_ids:
@@ -346,8 +384,12 @@ def main() -> int:
         cand = db.table("items").select("*").in_("source_id", src_ids).is_("considered_at", "null") \
             .gte("fetched_at", cutoff).order("published_at", desc=True).limit(MAX_CANDIDATES * 2).execute().data
         # drop anything clearly older than the lookback window
-        if section["id"] != "f1":  # a race can be a few days old and still be news
-            cand = [c for c in cand if not c["published_at"] or c["published_at"] >= cutoff]
+        # races and weekly picks can be a few days old; topic videos look back a week
+        sec_cutoff = {"f1": None, "films_tv": None,
+                      "youtube_discover": (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+                      }.get(section["id"], cutoff)
+        if sec_cutoff:
+            cand = [c for c in cand if not c["published_at"] or c["published_at"] >= sec_cutoff]
         cand = cand[:MAX_CANDIDATES]
         for c in cand:
             c["source_name"] = by_id[c["source_id"]]["name"]
@@ -366,12 +408,21 @@ def main() -> int:
                 winner = race["results"][0]
                 chosen.append({"ids": [n], "headline": f"{winner['name']} wins the {race['race_name']}",
                                "summary": story})
+        elif section["id"] == "films_tv":
+            chosen = [{"ids": [n], "headline": c["title"], "summary": c["raw_summary"]}
+                      for n, c in enumerate(cand[:limit])]
+            cost = 0.0
         elif section["id"] == "youtube":
             # Subscriptions are never filtered: list every new upload.
             chosen = [{"ids": [n], "headline": c["title"], "summary": c["raw_summary"][:200] or "New video"}
                       for n, c in enumerate(cand[:limit])]
             cost = 0.0
         else:
+            if section["id"] == "notable_deaths":
+                channels = ", ".join(s["name"] for s in sources if s["kind"] == "youtube")
+                section = {**section, "ai_rule": section["ai_rule"]
+                           + f"\nFilms and TV he likes: {films.favourites_text(db)}"
+                           + f"\nYouTube channels he follows: {channels}"}
             chosen, cost = curate(claude, section, cand, limit)
             if section.get("deep_summary"):
                 with httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=20, follow_redirects=True) as http:

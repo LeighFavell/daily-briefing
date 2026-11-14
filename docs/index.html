@@ -16,14 +16,19 @@
 </head>
 <body>
   <header class="topbar">
-    <button class="link" id="nav-briefing" hidden>Briefing</button>
-    <span class="brand">Briefing</span>
-    <button class="link" id="nav-sources" hidden>Sources</button>
+    <span class="brand" id="page-title">Briefing</span>
   </header>
 
   <main id="app">
     <p class="muted center pad">Loading…</p>
   </main>
+
+  <nav class="tabs" id="tabs" hidden>
+    <a href="#" data-tab="briefing"><span class="ico">☀︎</span>Briefing</a>
+    <a href="#films" data-tab="films"><span class="ico">🎬</span>Films &amp; TV</a>
+    <a href="#settings" data-tab="settings"><span class="ico">⚙︎</span>Settings</a>
+  </nav>
+  <div class="toast" id="toast" hidden></div>
 
   <script src="config.js"></script>
   <script type="module" src="app.js"></script>
