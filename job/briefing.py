@@ -23,6 +23,8 @@ from zoneinfo import ZoneInfo
 import feedparser
 import httpx
 
+import f1
+
 MODEL = os.environ.get("BRIEFING_MODEL", "claude-haiku-5-5")
 # USD per million tokens (Haiku 5.5, prompts under 100K tokens)
 PRICE_IN, PRICE_OUT = 0.10, 0.50
@@ -131,6 +133,39 @@ def fetch_source(client: httpx.Client, src: dict) -> list[dict]:
     return fetch_rss(client, src["url"])
 
 
+def article_text(client: httpx.Client, url: str, limit: int = 6000) -> str:
+    """Pull the readable paragraphs out of an article page (good enough for BBC match reports)."""
+    resp = client.get(url)
+    resp.raise_for_status()
+    paras = re.findall(r"<p[^>]*>(.*?)</p>", resp.text, flags=re.S | re.I)
+    text = " ".join(clean_text(p, 2000) for p in paras)
+    return text[:limit]
+
+
+def cost_of(usage) -> float:
+    return (usage.input_tokens * PRICE_IN + usage.output_tokens * PRICE_OUT) / 1_000_000
+
+
+def deep_summary(claude, http: httpx.Client, url: str, headline: str) -> tuple[str | None, float]:
+    """Summarise the full article: the result and how the game was played."""
+    try:
+        body = article_text(http, url)
+    except Exception as exc:
+        log(f"    could not read article {url}: {exc}")
+        return None, 0.0
+    if len(body) < 300:
+        return None, 0.0
+    msg = claude.messages.create(
+        model=MODEL, max_tokens=300,
+        messages=[{"role": "user", "content":
+                   "In 2-3 sentences of British English, give the result and how the game was played "
+                   "(key moments, who scored or starred, turning points). Plain text only.\n\n"
+                   f"Headline: {headline}\n\nReport:\n{body}"}],
+    )
+    text = "".join(b.text for b in msg.content if b.type == "text").strip()
+    return (text or None), cost_of(msg.usage)
+
+
 # ---------------------------------------------------------------------------
 # Curation with Claude
 # ---------------------------------------------------------------------------
@@ -196,6 +231,29 @@ def curate(anthropic_client, section: dict, candidates: list[dict], limit: int):
 # Main
 # ---------------------------------------------------------------------------
 
+def fetch_f1(db, http: httpx.Client, src: dict, max_age_days: int) -> list[dict]:
+    """Store the latest Grand Prix (once) and return it as a single item."""
+    race = f1.fetch_latest_race(http, src["url"].rstrip("/"), max_age_days)
+    if not race:
+        return []
+    existing = db.table("f1_races").select("id").eq("id", race["id"]).execute().data
+    if not existing:
+        db.table("f1_races").insert({
+            "id": race["id"], "season": race["season"], "round": race["round"],
+            "race_name": race["race_name"], "race_date": race["race_date"],
+            "results": race["results"], "lap_positions": race["lap_positions"],
+            "pit_stops": race["pit_stops"],
+        }).execute()
+    winner = race["results"][0]
+    return [{
+        "url": race["url"],
+        "title": f"{race['race_name']} {race['season']}: {winner['name']} wins",
+        "raw_summary": f1.race_facts(race)[:500],
+        "published_at": race["start"],
+        "race_id": race["id"],
+    }]
+
+
 def supabase_url() -> str:
     """Accept the URL with stray spaces or a /rest/v1/ ending, and say clearly if it looks wrong."""
     url = os.environ["SUPABASE_URL"].strip().rstrip("/")
@@ -210,6 +268,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true", help="build a briefing now")
     ap.add_argument("--fetch-only", action="store_true", help="fetch sources only")
+    ap.add_argument("--f1-days", type=int, default=4,
+                    help="include the latest Grand Prix if it finished within this many days")
     args = ap.parse_args()
 
     from supabase import create_client
@@ -242,7 +302,10 @@ def main() -> int:
         for src in sources:
             now_iso = datetime.now(timezone.utc).isoformat()
             try:
-                items = fetch_source(http, src)
+                if src["kind"] == "f1":
+                    items = fetch_f1(db, http, src, args.f1_days)
+                else:
+                    items = fetch_source(http, src)
                 rows = [{
                     "source_id": src["id"],
                     "url": it["url"],
@@ -252,6 +315,9 @@ def main() -> int:
                 } for it in items]
                 if rows:
                     db.table("items").upsert(rows, on_conflict="url", ignore_duplicates=True).execute()
+                if src["kind"] == "f1" and items:
+                    item = db.table("items").select("id").eq("url", items[0]["url"]).single().execute().data
+                    db.table("f1_races").update({"item_id": item["id"]}).eq("id", items[0]["race_id"]).execute()
                 db.table("sources").update({"last_fetched_at": now_iso, "last_error": None}) \
                     .eq("id", src["id"]).execute()
                 log(f"  ok    {src['name']}: {len(rows)} entries")
@@ -280,7 +346,9 @@ def main() -> int:
         cand = db.table("items").select("*").in_("source_id", src_ids).is_("considered_at", "null") \
             .gte("fetched_at", cutoff).order("published_at", desc=True).limit(MAX_CANDIDATES * 2).execute().data
         # drop anything clearly older than the lookback window
-        cand = [c for c in cand if not c["published_at"] or c["published_at"] >= cutoff][:MAX_CANDIDATES]
+        if section["id"] != "f1":  # a race can be a few days old and still be news
+            cand = [c for c in cand if not c["published_at"] or c["published_at"] >= cutoff]
+        cand = cand[:MAX_CANDIDATES]
         for c in cand:
             c["source_name"] = by_id[c["source_id"]]["name"]
         considered += [c["id"] for c in cand]
@@ -288,13 +356,32 @@ def main() -> int:
             log(f"  {section['title']}: nothing new")
             continue
 
-        if section["id"] == "youtube":
+        if section["id"] == "f1":
+            chosen, cost = [], 0.0
+            for n, c in enumerate(cand[:limit]):
+                race = db.table("f1_races").select("*").eq("item_id", c["id"]).single().execute().data
+                story, _, tin, tout = f1.write_story(claude, MODEL, race)
+                cost += (tin * PRICE_IN + tout * PRICE_OUT) / 1_000_000
+                db.table("f1_races").update({"story": story}).eq("id", race["id"]).execute()
+                winner = race["results"][0]
+                chosen.append({"ids": [n], "headline": f"{winner['name']} wins the {race['race_name']}",
+                               "summary": story})
+        elif section["id"] == "youtube":
             # Subscriptions are never filtered: list every new upload.
             chosen = [{"ids": [n], "headline": c["title"], "summary": c["raw_summary"][:200] or "New video"}
                       for n, c in enumerate(cand[:limit])]
             cost = 0.0
         else:
             chosen, cost = curate(claude, section, cand, limit)
+            if section.get("deep_summary"):
+                with httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=20, follow_redirects=True) as http:
+                    for pick in chosen:
+                        ids = [i for i in pick.get("ids", []) if 0 <= i < len(cand)]
+                        if ids:
+                            text, extra = deep_summary(claude, http, cand[ids[0]]["url"], pick["headline"])
+                            cost += extra
+                            if text:
+                                pick["summary"] = text
         total_cost += cost
         for rank, pick in enumerate(chosen, start=1):
             ids = [i for i in pick.get("ids", []) if 0 <= i < len(cand)]

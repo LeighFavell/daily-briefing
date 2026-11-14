@@ -9,6 +9,7 @@ The web app on GitHub Pages shows it and ends with **"You're done"**.
 docs/                  Web app (GitHub Pages, installable on iPhone)
 job/briefing.py        Hourly job: fetch → curate with Claude → save briefing
 job/resolve_youtube.py Finds YouTube channel ids from channel names
+job/f1.py              F1 results, lap-by-lap positions and pit stops (Jolpica API)
 supabase/migrations/   Database schema + starting sections and sources
 .github/workflows/     Schedules for the two jobs
 ```
@@ -37,7 +38,12 @@ supabase/migrations/   Database schema + starting sections and sources
 - **Sources / sections**: the `sources` and `sections` tables. A broken feed shows red on the Sources page.
 - **Cost**: each briefing records its Claude cost in `briefings.ai_cost_usd`.
 
+## Phase 2 (sport)
+Run `supabase/migrations/0002_phase2_sport.sql` in the Supabase SQL editor.
+Adds Welsh rugby & football (full match reports summarised) and Formula 1
+(results, position-per-lap chart, race story). Test F1 any time with
+Actions → Build briefing → mode `f1-test` (looks back 30 days).
+
 ## Roadmap
-2. Sport: Welsh rugby & football summaries, F1 results with a position-per-lap chart
 3. Settings page, film/TV scores out of 10 with weekly recommendations, notable deaths
 4. Share-sheet capture inbox, Instagram/TikTok/Facebook redirect, notifications

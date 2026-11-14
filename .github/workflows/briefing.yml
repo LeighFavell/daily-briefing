@@ -8,7 +8,7 @@ on:
       mode:
         description: "What to run"
         type: choice
-        options: [build-now, fetch-only, normal]
+        options: [build-now, fetch-only, f1-test, normal]
         default: build-now
 
 concurrency:
@@ -36,5 +36,6 @@ jobs:
           case "${{ github.event.inputs.mode }}" in
             build-now)  python job/briefing.py --force ;;
             fetch-only) python job/briefing.py --fetch-only ;;
+            f1-test)    python job/briefing.py --force --f1-days 30 ;;
             *)          python job/briefing.py ;;
           esac

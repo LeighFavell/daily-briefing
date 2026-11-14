@@ -103,3 +103,22 @@ button { font: inherit; cursor: pointer; }
 .dot.bad { background: var(--bad); }
 .dot.wait { background: var(--wait); }
 code { font-size: 15px; }
+
+/* Formula 1 */
+.lapchart { width: 100%; height: auto; margin: 8px 0 4px; display: block; }
+.lapchart .grid { stroke: var(--line); stroke-width: 1; }
+.lapchart .axis { fill: var(--muted); font-size: 9px; }
+.lapchart .code { font-size: 8.5px; font-weight: 600; }
+.lapchart polyline { fill: none; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+.lapchart g.drv { cursor: pointer; transition: opacity .15s; }
+.lapchart g.dim { opacity: .12; }
+.lapchart g.hi polyline { stroke-width: 3; }
+.results { width: 100%; border-collapse: collapse; font-size: 15px; margin: 8px 0 4px; }
+.results th { text-align: left; font-weight: 500; font-size: 12px; color: var(--muted); padding: 4px 4px; }
+.results td { padding: 6px 4px; border-top: 1px solid var(--line); }
+.results tr[data-code] { cursor: pointer; }
+.results tr.sel td { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.results td:first-child { width: 26px; font-weight: 600; }
+.chip { display: inline-block; width: 4px; height: 14px; border-radius: 2px; margin-right: 8px; vertical-align: -2px; }
+.up { color: var(--accent); font-weight: 600; }
+.down { color: var(--bad); font-weight: 600; }
