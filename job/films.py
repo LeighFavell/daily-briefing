@@ -138,7 +138,8 @@ def make_picks(db, tmdb: Tmdb, claude, log, how_many: int = 5) -> tuple[list[dic
         f"He scored these highly: {liked_txt}\nHe disliked: {disliked_txt}\n\n"
         f"Choose the {how_many} best picks from the candidates below. Mix films and TV, prefer things he can "
         "stream in the UK, and avoid more of the same franchise he's already scored. For each, write one "
-        "sentence (British English) on why he'd enjoy it, naming a title he liked.\n\nCandidates:\n" + "\n".join(lines)
+        "sentence (British English) on why he'd enjoy it, naming a title he liked. "
+        "Reply only by calling the submit_picks tool.\n\nCandidates:\n" + "\n".join(lines)
     )
     tool = {
         "name": "submit_picks", "description": "Submit the picks.",
@@ -147,7 +148,7 @@ def make_picks(db, tmdb: Tmdb, claude, log, how_many: int = 5) -> tuple[list[dic
                 "n": {"type": "integer"}, "reason": {"type": "string"}}}}}},
     }
     msg = claude.messages.create(model=PICKS_MODEL, max_tokens=1500, tools=[tool],
-                                 tool_choice={"type": "tool", "name": "submit_picks"},
+                                 tool_choice={"type": "auto"},  # Sonnet 5.5 doesn't accept a forced tool
                                  messages=[{"role": "user", "content": prompt}])
     cost = (msg.usage.input_tokens * SONNET_IN + msg.usage.output_tokens * SONNET_OUT) / 1_000_000
     picks = next((b.input.get("picks", []) for b in msg.content if b.type == "tool_use"), [])
