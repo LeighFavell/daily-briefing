@@ -46,12 +46,18 @@ def _espn_groups(http, url: str, cols, highlight: list[str], only_with_highlight
     return d.get("name") or "", groups
 
 
+ALWAYS_SHOW = ["eng.1"]   # the Premier League, even with none of your teams in it
+
+
 def football(http) -> list[dict]:
-    groups = []
+    mine, extra = [], []
     for lg in FOOTBALL_LEAGUES:
-        _, gs = _espn_groups(http, f"{ESPN}/soccer/{lg}/standings", SOCCER_COLS, FOOTBALL_TEAMS, only_with_highlight=True)
-        groups += gs
-    return groups
+        always = lg in ALWAYS_SHOW
+        _, gs = _espn_groups(http, f"{ESPN}/soccer/{lg}/standings", SOCCER_COLS, FOOTBALL_TEAMS,
+                             only_with_highlight=not always)
+        for g in gs:
+            (mine if any(r["hi"] for r in g["rows"]) else extra).append(g)
+    return mine + extra   # your teams' league(s) first, then the Premier League
 
 
 def rugby(http) -> list[dict]:
