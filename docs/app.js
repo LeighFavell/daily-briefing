@@ -597,6 +597,47 @@ function titleRow(t, watch) {
       <button class="icon" data-del-title aria-label="Remove">✕</button></div>`;
 }
 
+// ---------------------------------------------------------------- sport tables
+async function renderSport() {
+  setNav("sport", "Sport");
+  const { data: sports, error } = await db.from("standings").select("*").order("sort_order");
+  if (error) return (app.innerHTML = `<p class="error pad">${esc(error.message)}</p>`);
+  if (!sports.length) {
+    app.innerHTML = `<div class="done"><h1>No tables yet</h1><p class="muted">They'll appear after the next hourly update.</p></div>`;
+    return;
+  }
+  let current = sports[0].id;
+  try { current = localStorage.getItem("sportTab") || current; } catch {}
+  if (!sports.some((s) => s.id === current)) current = sports[0].id;
+
+  let html = `<div class="seg pad">${sports.map((s) =>
+    `<button data-sport="${esc(s.id)}" class="${s.id === current ? "on" : ""}">${esc(s.title)}</button>`).join("")}</div>`;
+  for (const sp of sports) {
+    html += `<div class="sport" data-panel="${esc(sp.id)}" ${sp.id === current ? "" : "hidden"}>
+      <p class="meta pad">Updated ${ago(sp.updated_at)}${sp.id === "football" || sp.id === "rugby" ? " · your teams in bold" : ""}</p>`;
+    for (const g of sp.groups) {
+      html += `<section class="section"><h2>${esc(g.name)}</h2><div class="card tablecard"><table class="standings">
+        <thead><tr><th></th><th class="team">${sp.id === "f1" && g.columns[0] === "Team" ? "Driver" : "Team"}</th>
+        ${g.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>`;
+      for (const r of g.rows) {
+        html += `<tr class="${r.hi ? "hi" : ""}"><td>${r.pos ?? ""}</td><td class="team">${esc(r.name)}</td>
+          ${r.cells.map((c, i) => `<td class="${g.columns[i] === "Team" ? "teamcol" : ""}">${esc(c)}</td>`).join("")}</tr>`;
+      }
+      html += `</tbody></table></div></section>`;
+    }
+    html += `</div>`;
+  }
+  app.innerHTML = html;
+  app.querySelectorAll("[data-sport]").forEach((b) => b.addEventListener("click", () => {
+    const id = b.dataset.sport;
+    try { localStorage.setItem("sportTab", id); } catch {}
+    app.querySelectorAll("[data-sport]").forEach((x) => x.classList.toggle("on", x === b));
+    app.querySelectorAll("[data-panel]").forEach((p) => (p.hidden = p.dataset.panel !== id));
+    // jump to the first highlighted team
+    app.querySelector(`[data-panel="${id}"] tr.hi`)?.scrollIntoView({ block: "center" });
+  }));
+}
+
 // ---------------------------------------------------------------- routing
 async function route() {
   const { data } = await db.auth.getSession();
@@ -604,6 +645,7 @@ async function route() {
   window.scrollTo(0, 0);
   if (location.hash === "#settings" || location.hash === "#sources") return renderSettings();
   if (location.hash === "#films") return renderFilms();
+  if (location.hash === "#sport") return renderSport();
   return renderBriefing();
 }
 

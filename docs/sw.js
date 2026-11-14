@@ -1,5 +1,5 @@
 // Network first, falling back to the cached copy when offline.
-const CACHE = "briefing-v6";
+const CACHE = "briefing-v7";
 const SHELL = ["./", "index.html", "style.css", "app.js", "config.js", "manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {

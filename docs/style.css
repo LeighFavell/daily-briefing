@@ -217,3 +217,21 @@ details.add input { display: block; width: 100%; margin: 6px 0; }
 
 .card.refresh { display: flex; align-items: center; gap: 12px; }
 .small:disabled { opacity: .6; }
+
+/* Sport tables */
+.seg { display: flex; gap: 6px; margin-top: 16px; }
+.seg button {
+  flex: 1; padding: 9px 6px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--card); color: var(--muted); font-weight: 600; font-size: 15px;
+}
+.seg button.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.tablecard { padding: 6px 4px; overflow-x: auto; }
+.standings { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+.standings th { font-size: 11px; font-weight: 600; color: var(--muted); padding: 6px 5px; text-align: right; }
+.standings td { padding: 7px 5px; text-align: right; border-top: 1px solid var(--line); white-space: nowrap; }
+.standings td:first-child, .standings th:first-child { width: 22px; color: var(--muted); }
+.standings .team { text-align: left; width: 100%; white-space: normal; }
+.standings .teamcol { text-align: left; color: var(--muted); font-size: 13px; white-space: normal; }
+.standings td:last-child { font-weight: 700; }
+.standings tr.hi td { background: color-mix(in srgb, var(--accent) 16%, transparent); font-weight: 700; color: var(--text); }
+.tabs a { max-width: 110px; }

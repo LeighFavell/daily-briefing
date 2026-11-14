@@ -312,6 +312,14 @@ def main() -> int:
 
     settings = db.table("settings").select("*").eq("id", 1).single().execute().data
     tz = ZoneInfo(settings["timezone"])
+
+    # League tables for the Sport tab are refreshed every run (a few quick requests)
+    import tables
+    try:
+        with httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=20, follow_redirects=True) as http:
+            tables.update_all(db, http, log)
+    except Exception as exc:
+        log(f"  League tables failed: {exc}")
     now_local = datetime.now(tz)
 
     slot = None
