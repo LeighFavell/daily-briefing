@@ -158,7 +158,7 @@ def deep_summary(claude, http: httpx.Client, url: str, headline: str) -> tuple[s
     msg = claude.messages.create(
         model=MODEL, max_tokens=300,
         messages=[{"role": "user", "content":
-                   "In 2-3 sentences of British English, give the result and how the game was played "
+                   "In 2-3 sentences of British English, give the result and how it was won "
                    "(key moments, who scored or starred, turning points). Plain text only.\n\n"
                    f"Headline: {headline}\n\nReport:\n{body}"}],
     )
