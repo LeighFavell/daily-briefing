@@ -52,6 +52,29 @@ def clean_text(raw: str | None, limit: int = 500) -> str:
     return text[:limit]
 
 
+WELSH_URL_HINTS = ("/cymrufyw", "/cymraeg", "golwg360", "/cy/", "bbc.co.uk/newyddion")
+WELSH_WORDS = {
+    "yn", "y", "yr", "ac", "mae", "gan", "wedi", "ei", "eu", "fod", "bod", "cael", "gyda", "hyn",
+    "sydd", "yng", "ym", "nid", "ddim", "neu", "dros", "rhaid", "fydd", "bydd", "oedd", "roedd",
+    "iddo", "iddi", "hefyd", "ond", "mewn", "gael", "wrth", "rhwng", "ar", "i'r", "o'r", "y'n",
+    "dweud", "newydd", "pobl", "ysgol", "iaith", "gymraeg", "cymraeg", "achos", "oherwydd", "eisiau",
+    "fwy", "galw", "arian", "gwasanaeth", "iechyd", "cyngor", "gweinidog", "llywodraeth", "blwyddyn",
+    "heddiw", "gwaith", "ein", "eich", "hwn", "hon", "fel", "dau", "tri", "gêm", "tîm", "ennill", "colli",
+    "heddlu", "dyn", "menyw", "plant", "teulu", "ardal", "cynllun", "ffordd", "tân", "ddydd", "nos",
+}
+
+
+def is_welsh(title: str, summary: str = "", url: str = "") -> bool:
+    """True for Welsh-language articles (Leigh reads English only)."""
+    if any(h in (url or "").lower() for h in WELSH_URL_HINTS):
+        return True
+    words = re.findall(r"[a-zâêîôûŵŷ'’]+", f"{title} {summary[:300]}".lower().replace("’", "'"))
+    if len(words) < 4:
+        return False
+    hits = sum(w in WELSH_WORDS for w in words)
+    return hits >= 3 and hits / len(words) >= 0.15
+
+
 def entry_time(entry) -> datetime | None:
     for key in ("published_parsed", "updated_parsed"):
         t = entry.get(key)
@@ -89,6 +112,8 @@ def fetch_rss(client: httpx.Client, url: str) -> list[dict]:
         summary = e.get("summary") or ""
         if not summary and e.get("media_description"):
             summary = e.get("media_description")
+        if is_welsh(title, clean_text(summary), link):
+            continue
         items.append({
             "url": link,
             "title": title,
@@ -206,7 +231,8 @@ CURATE_TOOL = {
 
 READER = ("The reader is Leigh, who lives in Llantwit Major, South Wales, and leads a data, "
           "BI and AI consulting practice (Microsoft Fabric, Power BI, Dynamics 365, Azure). "
-          "He wants a short, finite briefing instead of doom scrolling, so be selective.")
+          "He wants a short, finite briefing instead of doom scrolling, so be selective. "
+          "He reads English only: never choose an article written in Welsh or any other language.")
 
 
 def curate(anthropic_client, section: dict, candidates: list[dict], limit: int):
