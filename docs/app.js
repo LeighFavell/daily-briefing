@@ -318,7 +318,12 @@ async function renderSettings() {
     db.from("sources").select("*").order("created_at"),
   ]);
 
-  let html = `<section class="section"><h2>Briefing times (UK)</h2><div class="card">
+  let html = `<section class="section"><div class="card refresh">
+      <div class="grow"><strong>Refresh now</strong>
+        <div class="meta" id="refresh-note">Fetch the latest news and build a new briefing (about 2 minutes).</div></div>
+      <button class="small" id="refresh-btn">Refresh</button>
+    </div></section>
+    <section class="section"><h2>Briefing times (UK)</h2><div class="card">
       <div class="chips">${settings.briefing_times.map((t) =>
         `<span class="chip-t">${esc(t)}<button data-del-time="${esc(t)}" aria-label="Remove ${esc(t)}">✕</button></span>`).join("")}</div>
       <div class="inline"><input type="time" id="new-time" value="12:30"><button class="small" id="add-time">Add time</button></div>
@@ -362,6 +367,9 @@ async function renderSettings() {
   html += `<div class="pad center"><p class="meta">Changes apply from the next briefing.</p>
       <button class="link" id="signout">Sign out</button></div>`;
   app.innerHTML = html;
+
+  // manual refresh
+  document.getElementById("refresh-btn").addEventListener("click", refreshNow);
 
   // times
   const saveTimes = async (times) => {
@@ -437,6 +445,38 @@ async function renderSettings() {
     await db.auth.signOut();
     renderSignIn();
   });
+}
+
+async function refreshNow() {
+  const btn = document.getElementById("refresh-btn");
+  const note = document.getElementById("refresh-note");
+  btn.disabled = true;
+  btn.textContent = "Starting…";
+  const { data: before } = await db.from("briefings").select("id").order("created_at", { ascending: false }).limit(1);
+  const { error } = await db.functions.invoke("refresh");
+  if (error) {
+    btn.disabled = false;
+    btn.textContent = "Refresh";
+    let detail = error.message;
+    try { detail = await error.context.text(); } catch {}
+    note.textContent = `Couldn't start the refresh: ${detail}`;
+    return;
+  }
+  btn.textContent = "Working…";
+  note.textContent = "Fetching and summarising. This usually takes about 2 minutes. You can leave this page.";
+  const started = Date.now();
+  const poll = setInterval(async () => {
+    const { data } = await db.from("briefings").select("id").order("created_at", { ascending: false }).limit(1);
+    const onPage = document.getElementById("refresh-btn") === btn;
+    if (data?.[0]?.id && data[0].id !== before?.[0]?.id) {
+      clearInterval(poll);
+      toast("New briefing ready");
+      if (onPage) { btn.disabled = false; btn.textContent = "Refresh"; note.textContent = "Done. New items are in Briefing."; }
+    } else if (Date.now() - started > 5 * 60000) {
+      clearInterval(poll);
+      if (onPage) { btn.disabled = false; btn.textContent = "Refresh"; note.textContent = "Finished, but there was nothing new worth adding."; }
+    }
+  }, 15000);
 }
 
 // ---------------------------------------------------------------- films & TV

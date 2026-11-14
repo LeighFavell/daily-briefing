@@ -214,3 +214,6 @@ details.add input { display: block; width: 100%; margin: 6px 0; }
 }
 .readbtn:active { background: var(--accent); color: var(--accent-text); }
 .card.gone { opacity: 0; transform: translateX(30px); transition: opacity .25s, transform .25s; }
+
+.card.refresh { display: flex; align-items: center; gap: 12px; }
+.small:disabled { opacity: .6; }
