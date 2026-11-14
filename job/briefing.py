@@ -195,6 +195,17 @@ def curate(anthropic_client, section: dict, candidates: list[dict], limit: int):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+def supabase_url() -> str:
+    """Accept the URL with stray spaces or a /rest/v1/ ending, and say clearly if it looks wrong."""
+    url = os.environ["SUPABASE_URL"].strip().rstrip("/")
+    url = re.sub(r"/rest/v1$", "", url)
+    if not re.fullmatch(r"https://[a-z0-9]+\.supabase\.co", url):
+        raise SystemExit(f"SUPABASE_URL secret looks wrong: expected https://<project>.supabase.co, "
+                         f"got something {len(url)} characters long starting {url[:12]!r}")
+    return url
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true", help="build a briefing now")
@@ -202,7 +213,7 @@ def main() -> int:
     args = ap.parse_args()
 
     from supabase import create_client
-    db = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SECRET_KEY"])
+    db = create_client(supabase_url(), os.environ["SUPABASE_SECRET_KEY"].strip())
 
     settings = db.table("settings").select("*").eq("id", 1).single().execute().data
     tz = ZoneInfo(settings["timezone"])

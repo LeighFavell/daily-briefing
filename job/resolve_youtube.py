@@ -10,12 +10,24 @@ Usage:
 """
 import argparse
 import os
+import re
 import sys
 
 import httpx
 from supabase import create_client
 
 SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
+
+
+
+def supabase_url() -> str:
+    """Accept the URL with stray spaces or a /rest/v1/ ending, and say clearly if it looks wrong."""
+    url = os.environ["SUPABASE_URL"].strip().rstrip("/")
+    url = re.sub(r"/rest/v1$", "", url)
+    if not re.fullmatch(r"https://[a-z0-9]+\.supabase\.co", url):
+        raise SystemExit(f"SUPABASE_URL secret looks wrong: expected https://<project>.supabase.co, "
+                         f"got something {len(url)} characters long starting {url[:12]!r}")
+    return url
 
 
 def main() -> int:
@@ -27,7 +39,7 @@ def main() -> int:
     if not key:
         print("YOUTUBE_API_KEY secret is not set.")
         return 1
-    db = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SECRET_KEY"])
+    db = create_client(supabase_url(), os.environ["SUPABASE_SECRET_KEY"].strip())
     q = db.table("sources").select("*").eq("kind", "youtube")
     if not args.all:
         q = q.is_("youtube_channel_id", "null")
